@@ -5,11 +5,17 @@ from typing import TYPE_CHECKING, Iterable
 import numpy as np
 import shapely
 from anndata import AnnData
+from geopandas import GeoDataFrame
 from loguru import logger
 from multiscale_spatial_image import MultiscaleSpatialImage
+from napari.layers import Points, Shapes
+from napari.utils.notifications import show_info
 from napari.viewer import Viewer
 from qtpy.QtWidgets import QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
+from shapely import Polygon
 from spatialdata import SpatialData
+from spatialdata.models import PointsModel, ShapesModel
+from spatialdata.transformations import Identity, get_transformation
 
 from napari_spatialdata.utils._utils import _get_transform, _swap_coordinates
 
@@ -68,7 +74,8 @@ class SdataWidget(QWidget):
             lambda item: self.coordinate_system_widget._select_coord_sys(item.text())
         )
         self.coordinate_system_widget.itemClicked.connect(self._update_layers_visibility)
-        self._viewer._viewer.layers.events.inserted.connect(self._on_insert_layer)
+        self._viewer.bind_key("Shift-E", self.export)
+        self._viewer.layers.events.inserted.connect(self._on_insert_layer)
 
     def _on_insert_layer(self, event: Event) -> None:
         layer = event.value
@@ -103,8 +110,8 @@ class SdataWidget(QWidget):
         coordinate_system = self.coordinate_system_widget._system
 
         # No layer selected on first time coordinate system selection
-        if self._viewer._viewer.layers:
-            for layer in self._viewer._viewer.layers:
+        if self._viewer.layers:
+            for layer in self._viewer.layers:
                 if layer.name not in elements:
                     layer.visible = False
                 elif layer.metadata["_active_in_cs"]:
@@ -121,9 +128,9 @@ class SdataWidget(QWidget):
 
         xy = np.array([df.geometry.x, df.geometry.y]).T
         xy = np.fliplr(xy)
-        radii = np.array([df.radius[i] for i in range(0, len(df))])
+        # radii = np.array([df.radius[i] for i in range(0, len(df))])
 
-        self._viewer._viewer.add_points(
+        self._viewer.add_points(
             xy,
             name=key,
             affine=affine,
@@ -165,7 +172,7 @@ class SdataWidget(QWidget):
         # this will only work for polygons and not for multipolygons
         polygons = _swap_coordinates(polygons)
 
-        self._viewer._viewer.add_shapes(
+        self._viewer.add_shapes(
             polygons,
             name=key,
             affine=affine,
@@ -199,7 +206,7 @@ class SdataWidget(QWidget):
         selected_cs = self.coordinate_system_widget._system
         affine = _get_transform(self._sdata.labels[key], selected_cs)
 
-        self._viewer._viewer.add_labels(
+        self._viewer.add_labels(
             self._sdata.labels[key],
             name=key,
             affine=affine,
@@ -223,7 +230,7 @@ class SdataWidget(QWidget):
         if isinstance(img, MultiscaleSpatialImage):
             img = img["scale0"][key]
         # TODO: type check
-        self._viewer._viewer.add_image(
+        self._viewer.add_image(
             img,
             name=key,
             affine=affine,
@@ -255,3 +262,67 @@ class SdataWidget(QWidget):
                 "_current_cs": selected_cs,
             },
         )
+
+    def export(self, _: Viewer) -> None:
+        for layer in self._viewer.layers:
+            if layer not in self._viewer.layers.selection:
+                continue
+
+            if "sdata" not in layer.metadata:
+                raise RuntimeError(
+                    "Cannot save the layer to a spatialdata object as no spatialdata object is associated with it."
+                )
+            if not len(layer.data):
+                logger.warn(f"Shape layer `{layer.name}` has no visible shapes.")
+                continue
+
+            key = f"{layer.name}"
+            # TODO: Automatically change when creating a layer, requires a napari_spatialdata_viewer.
+            zarr_name = key.replace(" ", "_").replace("[", "").replace("]", "").replace(":", "_")
+
+            if isinstance(layer, Shapes):
+                self._save_shapes(layer, zarr_name)
+            elif isinstance(layer, Points):
+                self._save_points(layer, zarr_name)
+
+    def _save_shapes(self, layer: Shapes, name: str) -> None:
+        layer.metadata["_current_cs"]
+        sdata: SpatialData = layer.metadata["sdata"]
+        if name in sdata.shapes:
+            # TODO check coordinates layer and sdata
+            transformations = get_transformation(sdata.shapes[name], get_all=True)
+
+        polygons_coords = layer.data
+
+        if layer.ndim == 3:
+            # TODO, maybe add warning upon creation of shapes layer with ndim 3 or add z separately.
+            show_info("3D polygons are not supported yet, converting to 2D.")
+            polygons_coords = [c[:, 1:] for c in polygons_coords]
+        elif layer.ndim != 2:
+            raise ValueError("Only 2D or 3D shapes are supported")
+
+        # Napari coords are yx but we store xy
+        polygons = [Polygon(np.fliplr(polygon_coord)) for polygon_coord in polygons_coords]
+        gdf = GeoDataFrame({"geometry": polygons})
+        parsed = ShapesModel.parse(gdf, transformations=transformations)
+        sdata.add_shapes(name=name, shapes=parsed, overwrite=True)
+        show_info(f"Shapes layer {name} has been saved to the spatialdata object.")
+
+    def _save_points(self, layer: Points, name: str) -> None:
+        cs = layer.metadata["_current_cs"]
+        # TODO: change global after transform refactor.
+        transformations = {"global": Identity(), cs: Identity()} if cs != "global" else {cs: Identity()}
+        points_coords = layer.data
+        sdata = layer.metadata["sdata"]
+
+        assert layer.ndim in (2, 3)
+
+        # coords from napari are in the (z)yx coordinate systems, we want to store them as (z)xy
+        if layer.ndim == 2:
+            points_coords = np.fliplr(points_coords)
+        else:
+            points_coords[:, [1, 2]] = points_coords[:, [2, 1]]
+        # saving as points (drawback: radius is not saved)
+        points = PointsModel.parse(points_coords, transformations=transformations)
+        sdata.add_points(name=name, points=points, overwrite=True)
+        show_info("Points saved in the SpatialData object")

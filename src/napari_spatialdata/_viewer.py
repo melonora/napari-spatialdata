@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from loguru import logger
 from napari import Viewer
-from napari.layers import Labels, Points, Shapes
+from napari.layers import Image, Labels, Points, Shapes
 from napari.utils.notifications import show_info
 
 if TYPE_CHECKING:
@@ -24,4 +25,9 @@ class SpatialDataViewer:
             layer.metadata["sdata"] = active_layer_metadata["sdata"]
             layer.metadata["_current_cs"] = active_layer_metadata["_current_cs"]
             layer.metadata["_active_in_cs"] = {active_layer_metadata["_current_cs"]}
+            # For saving with same transformations as parent later. Only image is a valid parent
+            if type(active_layer) == Image:
+                layer.metadata["_parent_element"] = active_layer.name
+            else:
+                logger.warning(f"Type of parent layer is not {Image}, but {type(active_layer)} instead")
             show_info(f"The spatialdata object is set to the spatialdata object of {active_layer}")
