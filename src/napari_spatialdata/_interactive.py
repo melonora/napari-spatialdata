@@ -90,7 +90,7 @@ class Interactive:
         self._list_widget = self._viewer.window.add_dock_widget(
             self._sdata_widget, name="SpatialData", area="left", menu=self._viewer.window.window_menu
         )
-        self._viewer.window.add_plugin_dock_widget("napari-spatialdata", "View")
+        self._viewer.window.add_plugin_dock_widget("napari-spatialdata", "View SpatialData tables")
         if not headless:
             self.run()
 

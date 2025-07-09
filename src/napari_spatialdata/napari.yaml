@@ -5,9 +5,11 @@ contributions:
     - id: napari-spatialdata.QtAdataScatterWidget
       python_name: napari_spatialdata._view:QtAdataScatterWidget
       title: Visualize spatial omics data in napari
+      short_title: SpatialData AnnData plotter
     - id: napari-spatialdata.QtAdataViewWidget
       python_name: napari_spatialdata._view:QtAdataViewWidget
-      title: Visualize spatial omics data in napari
+      title: Display and interact with AnnData-backed tables linked to SpatialData backed napari layers.
+      short_title: SpatialData AnnData viewer
     - id: napari-spatialdata.QtAdataAnnotationWidget
       python_name: napari_spatialdata._view:QtAdataAnnotationWidget
       title: Annotation in napari
@@ -16,12 +18,23 @@ contributions:
       title: Get napari Reader for spatialdata
   widgets:
     - command: napari-spatialdata.QtAdataScatterWidget
-      display_name: Scatter
+      display_name: SpatialData tables scatter plotter
     - command: napari-spatialdata.QtAdataViewWidget
-      display_name: View
+      display_name: View SpatialData tables
     - command: napari-spatialdata.QtAdataAnnotationWidget
       display_name: Annotation
   readers:
     - command: napari-spatialdata.get_reader
       accepts_directories: true
       filename_patterns: ["*.zarr"]
+
+  menus:
+    napari/layers/visualize:
+      - submenu: tabular_data
+    tabular_data:
+      - command: napari-spatialdata.QtAdataViewWidget
+      - command: napari-spatialdata.QtAdataScatterWidget
+
+  submenus:
+    - id: tabular_data
+      label: AnnData table view
